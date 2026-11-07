@@ -108,13 +108,20 @@ O script cria só a tabela `inet wgm_<iface>` (subida e removida com a interface
 - isolamento entre peers (padrão ligado; desligue com `--isolate no` se filiais precisarem se falar pelo hub);
 - masquerade de saída só se você definir `-n <iface>`.
 
-Ele **não** mexe no firewall do host. No `init` e no `status` ele avisa e mostra o comando quando encontra:
+Ele **não** mexe no firewall do host. No `init` e no `status` ele confere se a porta UDP do túnel e o forward do `wg0` já estão liberados e só avisa o que falta, com o comando pronto:
 
-- firewalld ou ufw ativos;
-- política `FORWARD DROP` do iptables (comum com Docker); nesse caso as regras sugeridas vão na `DOCKER-USER`. Se um script ou timer gerencia essa chain, inclua as regras nele;
-- chain `input` com `policy drop` no nftables: libere `udp dport <porta>`.
+| Firewall do host | Comando sugerido |
+|---|---|
+| ufw | `ufw allow <porta>/udp` e `ufw route allow in on wg0` |
+| firewalld | `firewall-cmd` com a porta e a interface na zona `trusted` |
+| iptables com `FORWARD DROP` (Docker, sem ufw) | regras na `DOCKER-USER` (ou `FORWARD`) |
+| nftables nativo | `nft add rule <família> <tabela> <chain> ...` com os nomes reais da sua tabela |
 
-Libere também a porta UDP no firewall do provedor, se houver.
+O forward só é cobrado quando há rede para rotear: redes atrás do servidor, LAN de peer, NAT ou isolamento desligado. Tabelas que o `iptables-nft` cria para o ufw e o Docker não são confundidas com nftables nativo. Quando está tudo liberado, aparece `[ok] Firewall do host: ...`.
+
+Com nftables nativo, grave as regras também no arquivo que carrega a tabela (por exemplo `/etc/nftables.conf`). Em host com Docker ou ufw, esse arquivo não pode ter `flush ruleset`, e o serviço `nftables` não deve ser parado com `systemctl stop`, porque os dois apagam as regras do Docker e do ufw.
+
+Libere também a porta UDP no firewall do provedor e encaminhe no roteador de borda, se houver.
 
 ## Segurança por design
 
