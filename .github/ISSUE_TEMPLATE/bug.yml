@@ -1,0 +1,54 @@
+name: Bug
+description: Algo não funciona como o README descreve
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antes de colar qualquer saída, **remova chaves (PrivateKey, PresharedKey), IPs públicos, domínios e nomes de clientes**.
+        Vulnerabilidade de segurança não vai aqui: use a aba Security, conforme o SECURITY.md.
+  - type: input
+    id: versao
+    attributes:
+      label: Versão
+      description: Saída de `wg-server-manager version`
+      placeholder: wg-server-manager.sh 1.3.1
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distro e ambiente
+      placeholder: Debian 13 em VPS, Ubuntu 24.04 em container LXC, etc.
+    validations:
+      required: true
+  - type: dropdown
+    id: componente
+    attributes:
+      label: Onde ocorreu
+      options:
+        - Script (CLI ou menu)
+        - Painel web
+        - Instalação
+    validations:
+      required: true
+  - type: textarea
+    id: passos
+    attributes:
+      label: Como reproduzir
+      description: Comandos exatos, na ordem
+      render: bash
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: O que era esperado e o que aconteceu
+    validations:
+      required: true
+  - type: textarea
+    id: saida
+    attributes:
+      label: Saída relevante (sem chaves)
+      description: Erro do script, `wg-server-manager status` ou `journalctl -u wgm-panel`
+      render: text

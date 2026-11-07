@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sintaxe do Bash
+        run: bash -n wg-server-manager.sh
+
+      - name: ShellCheck
+        run: shellcheck -S warning wg-server-manager.sh
+
+      - name: Painel compila
+        run: python3 -m py_compile panel/wgm-panel.py
+
+      - name: Sem travessao no texto
+        run: |
+          if grep -rn --include='*.sh' --include='*.py' --include='*.md' $'\xe2\x80\x94' . ; then
+            echo "Remova o travessao (U+2014) dos arquivos acima."
+            exit 1
+          fi
+
+  funcional:
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencias
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq wireguard-tools nftables
+
+      - name: Fluxo basico e recusas
+        run: |
+          set -eu
+          export WG_DIR=$(mktemp -d)
+          S="sudo -E ./wg-server-manager.sh"
+          $S -i wgci init -a 10.99.0.1/24 -p 51820 -e vpn.exemplo.com.br
+          $S -i wgci peer add SITE-A -t site -L 10.30.0.0/24
+          $S -i wgci peer add NOTE-B
+          # Deve recusar: LAN sobreposta, porta repetida, rede de tunel sobreposta
+          ! $S -i wgci peer add SITE-C -t site -L 10.30.0.128/25
+          ! $S -i wgci2 init -a 10.98.0.1/24 -p 51820 -e vpn.exemplo.com.br
+          ! $S -i wgci3 init -a 10.99.0.1/16 -p 51830 -e vpn.exemplo.com.br
+          # json valido e sem segredos
+          $S -i wgci json | python3 -m json.tool > /dev/null
+          ! $S -i wgci json | grep -qiE 'privatekey|presharedkey'
+          $S -i wgci peer del NOTE-B -y

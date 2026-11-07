@@ -1,0 +1,29 @@
+name: Sugestão
+description: Funcionalidade nova ou mudança de comportamento
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qual problema isso resolve
+      description: Descreva a situação real em que a ferramenta não atende
+    validations:
+      required: true
+  - type: textarea
+    id: proposta
+    attributes:
+      label: Proposta
+      description: Como você imagina o comando, a opção ou a tela
+    validations:
+      required: true
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas consideradas
+  - type: checkboxes
+    id: principios
+    attributes:
+      label: Princípios do projeto
+      options:
+        - label: Li a seção "Princípios do projeto" do CONTRIBUTING.md
+          required: true
