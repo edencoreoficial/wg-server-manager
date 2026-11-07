@@ -4,7 +4,7 @@
 #  Gerador de servidor e peers WireGuard para Debian e demais distros Linux
 #  com systemd (Ubuntu, RHEL/Rocky/Alma/Fedora, Arch, openSUSE).
 #
-#  EdenCore / Sagarys  |  Licenca MIT  |  v1.2.0
+#  EdenCore / Sagarys  |  Licenca MIT  |  v1.3.0
 #
 #  Seguranca por Design
 #  - umask 077: chaves, estado e <iface>.conf nascem 600; pastas 700.
@@ -26,7 +26,7 @@ set -Eeuo pipefail
 umask 077
 shopt -s nullglob
 
-readonly VERSION="1.2.0"
+readonly VERSION="1.3.0"
 readonly PROG=${0##*/}
 WG_DIR=${WG_DIR:-/etc/wireguard}
 IFACE=${WGM_IFACE:-wg0}
@@ -195,13 +195,15 @@ load_peer() {
   load_kv "$d/peer.env" P
   P_DIR=$d
 }
-peer_get() {  # nome chave -> valor, sem alterar as variaveis P_* carregadas
+kv_get() {  # arquivo chave -> valor, sem alterar variaveis globais
   local k v
+  [[ -r $1 ]] || return 0
   while IFS='=' read -r k v || [[ -n ${k:-} ]]; do
     if [[ $k == "$2" ]]; then echo "$v"; return 0; fi
-  done <"$PEERS/$1/peer.env"
+  done <"$1"
   return 0
 }
+peer_get() { kv_get "$PEERS/$1/peer.env" "$2"; }  # nome chave -> valor
 peer_names() {
   local d
   for d in "$PEERS"/*/; do
@@ -225,6 +227,8 @@ with_lock() {
   if [[ ! -d $STATE ]]; then
     [[ $1 == cmd_init || $1 == menu_init ]] || die "Servidor '$IFACE' nao existe. Crie com: $PROG -i $IFACE init"
     mkdir -p "$STATE"
+    # init recusado nao deixa pasta de estado vazia para tras
+    trap '[[ -f $SENV ]] || rm -rf -- "$STATE"' EXIT
   fi
   if command -v flock >/dev/null 2>&1; then
     exec 9>"$STATE/.lock"
@@ -245,9 +249,46 @@ server_allowed() {  # lado do servidor: o que pertence a este peer
   if [[ -n $P_LANS ]]; then echo "$P_IP/32, $P_LANS"; else echo "$P_IP/32"; fi
 }
 
+# Redes das OUTRAS interfaces gerenciadas no host: "iface tipo cidr rotulo".
+# Tipo T = rede do tunel, S = rede atras do servidor, P = LAN de peer.
+other_iface_nets() {
+  local d ifn senv addr p pname n arr=()
+  for d in "$WG_DIR"/wgm/*/; do
+    d=${d%/}; ifn=${d##*/}; senv="$d/server.env"
+    if [[ $ifn == "$IFACE" || ! -f $senv ]]; then continue; fi
+    addr=$(kv_get "$senv" S_ADDR)
+    if [[ -n $addr ]]; then echo "$ifn T $(cidr_norm "$addr") rede do tunel"; fi
+    read -ra arr <<<"$(kv_get "$senv" S_LANS | tr ',' ' ')"
+    for n in "${arr[@]}"; do echo "$ifn S $n rede atras do servidor"; done
+    for p in "$d"/peers/*/peer.env; do
+      pname=${p%/peer.env}; pname=${pname##*/}
+      read -ra arr <<<"$(kv_get "$p" P_LANS | tr ',' ' ')"
+      for n in "${arr[@]}"; do echo "$ifn P $n LAN do peer $pname"; done
+    done
+  done
+  return 0
+}
+
+# Recusa sobreposicao com outras interfaces (rotas do host colidiriam em silencio).
+# Uso: check_cross_iface <ignorar redes do servidor: 0|1> <cidr>...
+# Rede atras do servidor repetida entre tuneis e legitima (e rede local do hub).
+check_cross_iface() {
+  local skip_s=$1 n ifn t c label
+  shift
+  [[ $# -gt 0 ]] || return 0
+  while read -r ifn t c label; do
+    [[ -n $ifn ]] || continue
+    if [[ $t == S && $skip_s == 1 ]]; then continue; fi
+    for n in "$@"; do
+      if overlaps "$n" "$c"; then die "$n conflita com $c ($label, interface $ifn)."; fi
+    done
+  done < <(other_iface_nets)
+  return 0
+}
+
 # Recusa sobreposicao. Uso: check_conflicts <peer_a_ignorar> <ip> <lans>
 check_conflicts() {
-  local self=$1 ip=$2 lans=$3 s e i n x name arr=() mine=() theirs=() srv=()
+  local self=$1 ip=$2 lans=$3 s e i n x name arr=() mine=() theirs=() srv=() plans=()
   read -r s e < <(cidr_range "$S_NET")
   i=$(ip2int "$ip")
   (( i > s && i < e )) || die "IP $ip fora da faixa util do tunel $S_NET."
@@ -261,7 +302,9 @@ check_conflicts() {
       if overlaps "$n" "$x"; then die "LAN $n conflita com a rede do servidor $x."; fi
     done
     mine+=("$n")
+    plans+=("$n")
   done
+  if (( ${#plans[@]} )); then check_cross_iface 0 "${plans[@]}"; fi
   while read -r name; do
     [[ -z $name || $name == "$self" ]] && continue
     theirs=("$(peer_get "$name" P_IP)/32")
@@ -278,6 +321,7 @@ check_conflicts() {
 check_server_lans() {
   local arr=() theirs=() n x name
   read -ra arr <<<"${1//,/ }"
+  if (( ${#arr[@]} )); then check_cross_iface 1 "${arr[@]}"; fi
   for n in "${arr[@]}"; do
     if overlaps "$n" "$S_NET"; then die "Rede $n sobrepoe a rede do tunel $S_NET."; fi
     while read -r name; do
@@ -616,6 +660,15 @@ cmd_init() {
   local s e i; read -r s e < <(cidr_range "$S_NET"); i=$(ip2int "$S_IP")
   (( i > s && i < e )) || die "Use um IP de host em $S_NET, nao o endereco de rede ou broadcast."
   valid_port "$port" || die "Porta invalida: $port"
+  check_cross_iface 0 "$S_NET"
+  local senv_other
+  for senv_other in "$WG_DIR"/wgm/*/server.env; do
+    [[ $senv_other == "$SENV" ]] && continue
+    if [[ $(kv_get "$senv_other" S_PORT) == "$port" ]]; then
+      senv_other=${senv_other%/server.env}
+      die "Porta $port/udp ja usada pela interface ${senv_other##*/}. Use -p com outra porta."
+    fi
+  done
   [[ $mtu =~ ^[0-9]+$ ]] && (( mtu >= 1280 && mtu <= 1500 )) || die "MTU deve ficar entre 1280 e 1500."
   [[ $ka =~ ^[0-9]{1,5}$ ]] || die "Keepalive invalido: $ka"
   if [[ -z $endpoint ]]; then
