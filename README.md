@@ -11,7 +11,7 @@ Para operar sem terminal, use o painel em `panel/` (sob demanda, ~25 MB só enqu
 ## Instalação
 
 ```bash
-curl -fsSLO <url-do-repositorio>/wg-server-manager.sh   # ou copie o arquivo
+curl -fsSLO https://raw.githubusercontent.com/edencoreoficial/wg-server-manager/main/wg-server-manager.sh
 install -m 750 wg-server-manager.sh /usr/local/sbin/wg-server-manager
 wg-server-manager install        # wireguard-tools, nftables, iproute2, qrencode
 ```

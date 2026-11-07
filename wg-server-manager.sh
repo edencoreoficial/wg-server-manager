@@ -4,7 +4,7 @@
 #  Gerador de servidor e peers WireGuard para Debian e demais distros Linux
 #  com systemd (Ubuntu, RHEL/Rocky/Alma/Fedora, Arch, openSUSE).
 #
-#  EdenCore / Sagarys  |  Licenca MIT  |  v1.1.0
+#  EdenCore / Sagarys  |  Licenca MIT  |  v1.1.1
 #
 #  Seguranca por Design
 #  - umask 077: chaves, estado e <iface>.conf nascem 600; pastas 700.
@@ -26,7 +26,7 @@ set -Eeuo pipefail
 umask 077
 shopt -s nullglob
 
-readonly VERSION="1.1.0"
+readonly VERSION="1.1.1"
 readonly PROG=${0##*/}
 WG_DIR=${WG_DIR:-/etc/wireguard}
 IFACE=${WGM_IFACE:-wg0}
@@ -467,10 +467,23 @@ check_host_fw() {
 }
 
 # ------------------------------------------------------------- comandos ------
+# Le ID e ID_LIKE sem executar o arquivo: o os-release define VERSION, que aqui e readonly,
+# e um arquivo de sistema nunca deve rodar dentro do contexto do script.
+os_ids() {
+  local f=${1:-/etc/os-release} k v out=''
+  [[ -r $f ]] || { echo ''; return 0; }
+  while IFS='=' read -r k v || [[ -n ${k:-} ]]; do
+    case $k in
+      ID|ID_LIKE) v=${v#[\"\']}; v=${v%[\"\']}; out+=" $v" ;;
+    esac
+  done <"$f"
+  echo "$out"
+}
+
 cmd_install() {
   require_root
   local ids
-  ids=" $(. /etc/os-release 2>/dev/null; echo "${ID:-} ${ID_LIKE:-}") "
+  ids=" $(os_ids /etc/os-release) "
   info "Distro detectada:$ids"
   case $ids in
     *" debian "*|*" ubuntu "*)
