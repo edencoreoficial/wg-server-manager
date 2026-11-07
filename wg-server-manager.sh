@@ -4,7 +4,7 @@
 #  Gerador de servidor e peers WireGuard para Debian e demais distros Linux
 #  com systemd (Ubuntu, RHEL/Rocky/Alma/Fedora, Arch, openSUSE).
 #
-#  EdenCore / Sagarys  |  Licenca MIT  |  v1.3.0
+#  EdenCore / Sagarys  |  Licenca MIT  |  v1.3.1
 #
 #  Seguranca por Design
 #  - umask 077: chaves, estado e <iface>.conf nascem 600; pastas 700.
@@ -26,7 +26,7 @@ set -Eeuo pipefail
 umask 077
 shopt -s nullglob
 
-readonly VERSION="1.3.0"
+readonly VERSION="1.3.1"
 readonly PROG=${0##*/}
 WG_DIR=${WG_DIR:-/etc/wireguard}
 IFACE=${WGM_IFACE:-wg0}
@@ -490,16 +490,23 @@ needs_forward() {
 
 # Imprime "familia tabela chain" das chains base com policy drop no hook pedido, so em
 # tabelas nftables nativas. As do iptables-nft (ufw, Docker) sao tratadas pelo iptables.
+# $3 = lista "familia tabela" gerenciadas pelo iptables-nft. O nft avisa isso no stderr,
+# separado do ruleset, por isso a lista vem a parte.
 nft_native_drop_chains() {
-  local hook=$1 rs=$2 line fam='' tbl='' ch='' managed=0 skip=0
+  local hook=$1 rs=$2 managed=" ${3:-} " line fam='' tbl='' ch='' skip=0
   while IFS= read -r line; do
-    if [[ $line == "# Warning: table "*"managed by iptables-nft"* ]]; then
-      managed=1
-    elif [[ $line =~ ^table\ ([a-z0-9]+)\ ([^ ]+)\ \{ ]]; then
-      fam=${BASH_REMATCH[1]} tbl=${BASH_REMATCH[2]} ch='' skip=$managed managed=0
+    if [[ $line =~ ^table\ ([a-z0-9]+)\ ([^ ]+)\ \{ ]]; then
+      fam=${BASH_REMATCH[1]} tbl=${BASH_REMATCH[2]} ch='' skip=0
+      if [[ $managed == *" $fam:$tbl "* ]]; then skip=1; fi
     elif [[ $line =~ ^[[:space:]]+chain\ ([^ ]+)\ \{ ]]; then
       ch=${BASH_REMATCH[1]}
     elif (( skip == 0 )) && [[ $line == *"hook $hook "* && $line == *"policy drop"* ]]; then
+      # Assinatura do iptables-nft mesmo sem o aviso (o nft so avisa quando ha extensoes xt):
+      # familia ip/ip6, tabela classica e chain nativa em maiusculas.
+      if [[ $fam =~ ^ip6?$ && $tbl =~ ^(filter|nat|mangle|raw|security)$ \
+            && $ch =~ ^(INPUT|FORWARD|OUTPUT|PREROUTING|POSTROUTING)$ ]]; then
+        continue
+      fi
       echo "$fam $tbl $ch"
     fi
   done <<<"$rs"
@@ -509,8 +516,13 @@ nft_native_drop_chains() {
 # Avisa so o que falta: confere se a porta e o forward do tunel ja estao liberados
 # no ufw, firewalld, iptables (inclusive Docker) ou nftables nativo antes de alertar.
 check_host_fw() {
-  local rs ipt ufwst fwd fam tbl ch port_ok=0 fwd_ok=0 need_fwd=0 ufw_on=0 alerts=0 nft_hint=0
+  local rs ipt ufwst fwd fam tbl ch du managed='' w du_managed=0 port_ok=0 fwd_ok=0 need_fwd=0 ufw_on=0 alerts=0 nft_hint=0
   rs=$(nft list ruleset 2>/dev/null) || true
+  while IFS= read -r w; do
+    if [[ $w =~ table\ ([a-z0-9]+)\ ([^ ]+)\ is\ managed\ by\ iptables-nft ]]; then
+      managed+=" ${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"
+    fi
+  done < <(nft list ruleset 2>&1 >/dev/null || true)
   ipt=$(iptables -S 2>/dev/null) || true
   if grep -Eq "udp dport ($S_PORT|\{[^}]*\<$S_PORT\>[^}]*\})[^#]* accept" <<<"$rs" \
      || grep -Eq -- "--dport $S_PORT( .*)? -j ACCEPT" <<<"$ipt"; then
@@ -547,7 +559,14 @@ check_host_fw() {
   fi
 
   fwd=$(iptables -S FORWARD 2>/dev/null) || true
-  if (( ! ufw_on && need_fwd && ! fwd_ok )) && [[ $fwd == *"-P FORWARD DROP"* ]]; then
+  # DOCKER-USER com regras (alem de um RETURN) e politica de forward de quem administra o
+  # host. Nao sugere ACCEPT geral, que passaria por cima dela.
+  du=$(iptables -S DOCKER-USER 2>/dev/null | grep -Ev '^-N DOCKER-USER$|^-A DOCKER-USER -j RETURN$') || true
+  if (( ! ufw_on && need_fwd && ! fwd_ok )) && [[ $fwd == *"-P FORWARD DROP"* && -n $du ]]; then
+    du_managed=1
+    info "Forward do $IFACE controlado pela chain DOCKER-USER existente (regras proprias do host); nada sugerido."
+    info "Garanta nela o que deve passar entre o tunel e os containers (ex.: allowlist por grupo)."
+  elif (( ! ufw_on && need_fwd && ! fwd_ok )) && [[ $fwd == *"-P FORWARD DROP"* ]]; then
     ch=FORWARD
     if iptables -S DOCKER-USER >/dev/null 2>&1; then ch=DOCKER-USER; fi
     warn "Politica FORWARD DROP no iptables (tipico com Docker). O trafego roteado pelo tunel sera descartado ate liberar:"
@@ -565,7 +584,7 @@ check_host_fw() {
       printf '    nft add rule %s %s %s udp dport %s accept\n' "$fam" "$tbl" "$ch" "$S_PORT"
       alerts=1
     fi
-  done < <(nft_native_drop_chains input "$rs")
+  done < <(nft_native_drop_chains input "$rs" "$managed")
   if (( need_fwd && ! fwd_ok )); then
     while read -r fam tbl ch; do
       [[ -n $fam ]] || continue
@@ -574,7 +593,7 @@ check_host_fw() {
       printf '    nft add rule %s %s %s iifname "%s" accept\n' "$fam" "$tbl" "$ch" "$IFACE"
       printf '    nft add rule %s %s %s oifname "%s" ct state established,related accept\n' "$fam" "$tbl" "$ch" "$IFACE"
       alerts=1
-    done < <(nft_native_drop_chains forward "$rs")
+    done < <(nft_native_drop_chains forward "$rs" "$managed")
   fi
   if (( alerts && nft_hint )); then
     printf '    Grave as mesmas regras no arquivo que carrega essa tabela (ex.: /etc/nftables.conf) para valerem apos reboot.\n'
@@ -585,7 +604,9 @@ check_host_fw() {
   fi
 
   if (( ! alerts )); then
-    if (( need_fwd )); then
+    if (( du_managed )); then
+      ok "Firewall do host: $S_PORT/udp liberada; forward a cargo da DOCKER-USER."
+    elif (( need_fwd )); then
       ok "Firewall do host: $S_PORT/udp e forward do $IFACE liberados."
     else
       ok "Firewall do host: $S_PORT/udp liberada (sem forward necessario: nenhuma rede atras do servidor ou dos peers)."
