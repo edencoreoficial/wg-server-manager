@@ -78,7 +78,15 @@ Se mudar `-A` ou `-I`, reexporte a config do peer com `peer show`.
 | `status` | Resumo, `wg show` e checagem do firewall do host |
 | `json` | Estado em JSON (sem chaves privadas), usado pelo painel web |
 
-Várias interfaces: `wg-server-manager -i wg1 init ...`, `wg-server-manager -i wg1 peer add ...`.
+Várias interfaces, uma por tipo de túnel, cada uma com rede e porta próprias:
+
+```bash
+wg-server-manager -i wg-vpn   init -a 10.255.200.1/24 -p 51820 -e vpn.exemplo.com.br
+wg-server-manager -i wg-infra init -a 10.255.201.1/24 -p 51821 -e vpn.exemplo.com.br
+wg-server-manager -i wg-msp   peer add CLIENTE-FW -t site -L 10.30.0.0/24
+```
+
+O script recusa porta UDP repetida entre interfaces e qualquer sobreposição entre redes de túnel e LANs de peers de interfaces diferentes, porque as rotas do host colidiriam. A mesma rede atrás do servidor pode aparecer em mais de um túnel. No painel, a interface é escolhida na lista do topo.
 
 Opções do `init`: `-a` IP/máscara do servidor no túnel (padrão `10.99.0.1/24`), `-p` porta UDP (51820), `-e` endpoint público IP ou DDNS, `-d` DNS para peers `client`, `-l` redes atrás do servidor, `-n` interface para NAT de internet (padrão `none`), `--no-isolate` permite peer falar com peer, `-m` MTU (1420), `-k` keepalive padrão (25 s).
 
