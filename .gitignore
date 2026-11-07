@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.key
+*.psk
+*.conf
+!panel/nginx-wgm-panel.conf

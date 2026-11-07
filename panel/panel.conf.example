@@ -1,0 +1,26 @@
+# /etc/wgm-panel/panel.conf  (modo 600, dono root)
+# A senha e gravada por: wgm-panel --set-password
+
+user = admin
+# password_hash = (gerado pelo --set-password)
+
+# Caminho do script
+manager = /usr/local/sbin/wg-server-manager
+
+# Prefixo quando publicado no nginx em subcaminho (ex.: /wgm/). Acesso direto: /
+base_path = /
+
+# Segundos sem acesso ate o processo encerrar (so com o socket do systemd)
+idle_timeout = 600
+
+# Duracao da sessao. O login tambem cai quando o processo encerra por ociosidade.
+session_ttl = 1800
+
+# true exige HTTPS (ou http://localhost pelo tunel SSH, que os navegadores aceitam)
+cookie_secure = true
+
+# IPs de proxy cujo X-Real-IP e aceito como IP do cliente (separe por virgula)
+trusted_proxies = 127.0.0.1
+
+# Usado so quando o painel roda sem o socket do systemd
+listen = 127.0.0.1:8751

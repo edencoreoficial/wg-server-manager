@@ -1,0 +1,13 @@
+# wgm-panel: o systemd segura a porta e so sobe o painel no primeiro acesso.
+# Seguranca por Design: escuta apenas em loopback. Para nginx em container,
+# troque pelo IP do gateway da rede Docker do nginx (veja o README).
+[Unit]
+Description=wgm-panel (socket sob demanda)
+
+[Socket]
+ListenStream=127.0.0.1:8751
+FreeBind=yes
+NoDelay=yes
+
+[Install]
+WantedBy=sockets.target
